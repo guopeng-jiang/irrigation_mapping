@@ -77,7 +77,7 @@ WaterUse19_20 = WaterUse %>%
   summarise(sum_waterUse = sum(`Total for Consent`))
 ```
 
-Read consent layer and irrigation land use layer from geodatabases as sf object
+Read consent layer and irrigation land use layer from geodatabases as simple feature `sf` object
 ```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
 Consent = st_read(dsn = "N:/Gorden_Jiang/temp/Tukituki FEMPSubmissions2018.gdb",layer = "trythis_allresourceconsentspolygons")
 
