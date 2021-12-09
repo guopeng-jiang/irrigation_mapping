@@ -1,0 +1,307 @@
+---
+title: "HB Irrigation mapping (2019-20 water year)"
+author: "Gorden Jiang <gorden.jiang@hbrc.govt.nz>; Monique Benson <monique@hbrc.govt.nz>"
+output:
+  html_document: default
+  word_document: default
+
+---
+
+## Background
+
+Land use mapping has been combined with irrigation data from the 2019/20 irrigation year to identify how much water is being used on what land use types such as cropping and horticulture. Water use volumes from water metering data has been applied to mapped irrigation areas.  This gives an understanding of where water is being used and for what purpose.
+
+Mapping of this manner is fraud with difficulties due to the limitations of the input data, and the way the data is captured which is often for a different purpose i.e. managing consent, compliance purposes rather than regional mapping.   Without further refinement the maps should be considered preliminary and indicative of irrigation in HB.  The water use data however is actual water use data for the 2019/20 irrigation season.
+
+## Objective
+To create a map to show water use between 2019 and 2020 water year in Hawke's Bay for different irrigated land use types.
+
+## Data and method
+
+* Consent layer/data
+  +	Irrigation consent polygons and points used to ‘trigger’ parcels in land use layer
+  +	Auth ID links water use data to irrigated parcel.  Actual consent polygons not used due to inaccuracies of irrigation areas within the polygon. 
+  +	Water volume proportionally applied to land based on proportion of land use
+
+* Irrigation layer (MFE/Aqualinc) 
+  +	Aqualinc land use layer clipped to actual irrigation area.  Non irrigated land removed from this layer.
+  +	Aqualinc irrigation mapping has been edited using some local knowledge
+
+* Land use
+  +	Several land use layers joined to form this land use layer: Agri base, LCDB and …..
+
+The map was produced by joining water use data to consent layer on consent ID, then spatially joining the new layer to irrigated land use layer (while keeping the land use layer).
+
+![Analytic Workflow](N:/Gorden_Jiang/Monique_consent_mapping/workflow.png)
+
+## R markdown report for irrigation mapping
+
+### Data preparation
+
+Load packages
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+library(readxl)
+library(tidyverse)
+library(sf)
+library(sp)
+library(rgdal)
+```
+
+Load water use data from N drive
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+
+# irrigation wateruse
+WaterUse <- read_excel("N:/Water Information/Queries/Water_Accounting_Static_With_ANZIC_20211026.xlsx", 
+                       sheet = "Combined") %>% 
+  filter(ConsentID != "WP123456T") %>% # remove the test consent 
+  filter(PrimaryPurpose %in% c("Water Supply - Irrigation", 
+                             "Water Supply - Frost Protection", 
+                             "Recreational Facilities",
+                             "Water Supply - Agriculture", 
+                             "Water Supply - Damfill", 
+                             "Water Supply - Multiple Uses",
+                             "Water Supply - Recreation")) 
+```
+
+Summarise water use for each consent ID
+
+```{r eval=T, results='hide', error=FALSE, warning=FALSE, message=FALSE}
+WaterUse19_20 = WaterUse %>% 
+  select(ResourceConsentID, ConsentID, AuthHolder, `Total for Consent`) %>% 
+  group_by(ResourceConsentID, ConsentID, AuthHolder) %>%
+  summarise(sum_waterUse = sum(`Total for Consent`))
+```
+
+Read consent layer and irrigation land use layer from geodatabases as sf object
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+Consent = st_read(dsn = "N:/Gorden_Jiang/temp/Tukituki FEMPSubmissions2018.gdb",layer = "trythis_allresourceconsentspolygons")
+
+Consent = subset(Consent, Consent$AuthorisationActivityType == "Water Permit") %>% 
+  select(AuthorisationIRISID, AuthorisationHistoricID, AuthorisationActivityType, AuthorisationHolderContactName)
+
+HBIrrigation = st_read(dsn = "N:/Gorden_Jiang/Irrigation Analysis_Tim Norris/IrrigationAnalysis.gdb",layer = "irrigation_landuse_GJedited")
+
+```
+
+`irrigation_landuse_GJedited` layer was originally produced by Tim Norris from Land Science and then was modified based on local knowledge and feedback from external consultants.
+
+### Join irrigation water use to consent layer
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+Consent_wateruse = Consent %>% 
+  rename(ResourceConsentID = AuthorisationIRISID, 
+         ConsentID = AuthorisationHistoricID, 
+         AuthHolder = AuthorisationHolderContactName) %>% 
+  select(ResourceConsentID) %>% 
+  right_join(WaterUse19_20, by =  c("ResourceConsentID"))
+
+Consent_wateruse_spt = Consent_wateruse %>% filter(nchar(Shape) == 6) 
+# Query the AUTH IDs with null geometry!
+```
+
+The `Consent` layer appears to have missed 82 consent IDs, which existed in the water use data. There is a possibility that these consent IDs in the `Consent_wateruse_spt` were recorded as spatial points, rather than spatial polygons.
+
+Therefore, more data were requested from GIS Team using the missed consent IDs.
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+Consent_sply = st_read(dsn = "N:/Gorden_Jiang/Irrigation Analysis_Tim Norris/IrrigationAnalysis.gdb", 
+                       layer = "IRISPolygonsPlusConsentWaterUse_210916")
+
+Consent_spt = st_read(dsn = "N:/Gorden_Jiang/Irrigation Analysis_Tim Norris/IrrigationAnalysis.gdb",
+                      layer = "IRISPointsPlusConsentWaterUse_210916")
+```
+
+We join these two layers to the missed consent IDs `Consent_wateruse_spt` and see if any consent IDs are missing.
+
+We tried to join `Consent_sply` first and query the records with null geometry. 
+
+(Alternatively, We could merge `Consent_sply` and `Consent` before this step).
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+Consent_wateruse_spt2 = Consent_sply %>% 
+  select(AuthorisationIRISID, AuthorisationHistoricID, AuthorisationHolderContactName, AuthorisationActivityType) %>% 
+  rename(ResourceConsentID = AuthorisationIRISID, 
+         ConsentID = AuthorisationHistoricID, 
+         AuthHolder = AuthorisationHolderContactName
+         ) %>% 
+  select(ResourceConsentID) %>% 
+  right_join(Consent_wateruse_spt %>% 
+               st_drop_geometry(),
+             by= c("ResourceConsentID")) %>% 
+  filter(nchar(SHAPE) == 6) 
+# Query the AUTH IDs with null geometry! 
+```
+
+There are still unique 69 IDs missing. We then have to use spatial points for those IDs!
+
+Now, join `Consent_spt` to the IDs with null geometry in `Consent_wateruse_spt2`.
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+Consent_wateruse_spt_filled = Consent_spt %>% 
+  select(AuthorisationIRISID, AuthorisationHistoricID, AuthorisationHolderContactName, AuthorisationActivityType) %>% 
+  rename(ResourceConsentID = AuthorisationIRISID,
+         ConsentID = AuthorisationHistoricID, 
+         AuthHolder = AuthorisationHolderContactName) %>% 
+  select(ResourceConsentID) %>% 
+  right_join(Consent_wateruse_spt2 %>% 
+               st_drop_geometry(),
+             by= c("ResourceConsentID"))
+```
+
+Much better but still missing `AUTH-111467-03` and `AUTH-120244-02`!
+
+This issue needs to be raised with GIS Team.
+
+#### Two existing consent polygons with water use data and valid geometry
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+Consent_wateruse_sply1 = Consent_wateruse %>% 
+  filter(nchar(Shape) > 6) %>% 
+  rename(SHAPE = Shape) %>% 
+  mutate(Source = "Consent polygon")
+
+Consent_wateruse_sply2 = Consent_sply %>% 
+  select(AuthorisationIRISID, AuthorisationHistoricID, AuthorisationHolderContactName, AuthorisationActivityType) %>% 
+  rename(ResourceConsentID = AuthorisationIRISID, 
+         ConsentID = AuthorisationHistoricID, 
+         AuthHolder = AuthorisationHolderContactName
+  ) %>% 
+  select(ResourceConsentID) %>% 
+  right_join(Consent_wateruse_spt %>% 
+               st_drop_geometry(),
+             by= c("ResourceConsentID")) %>% 
+  filter(nchar(SHAPE) > 6) %>% 
+  mutate(Source = "Consent polygon")
+```
+
+#### How did we handle spatial points?
+
+Solution: Use those consent points to query polygons from property title.
+
+Tim Farrier produced a consolidated property title layer `HawkesBay_Property_Titles_Including_Owners_210921`. 
+
+It was produced by dissolving property parcels based on owners name and share boundaries.
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+polyb = st_read(dsn = "N:/Gorden_Jiang/GISTeam/210921/PropertyTitlesIncludingOwners.gdb", 
+                       layer = "HawkesBay_Property_Titles_Including_Owners_210921") %>% st_set_crs(2193)
+
+Consent_wateruse_sply3 = polyb %>% 
+  st_join(Consent_wateruse_spt_filled, left = T) %>% 
+  # join consent information from point layer to the target parcel, then remove the parcels with null consent IDs.
+  filter(!is.na(ResourceConsentID)) %>% 
+  mutate(Source = "Consent points") %>% 
+  select(ResourceConsentID, ConsentID, AuthHolder, sum_waterUse, SHAPE, Source)
+```
+
+### Merge existing consent polygon
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+Consent_wateruse_sply = rbind(Consent_wateruse_sply1, Consent_wateruse_sply2, Consent_wateruse_sply3)
+```
+
+### Spatial join consent layer to land use layer (while keeping the land use layer)
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+HBIrrigation_waterUse = HBIrrigation %>% 
+  st_join(Consent_wateruse_sply, left = T) %>% 
+  select(-Shape_Leng, -Shape_Area)
+
+HBIrrigation_waterUse = as(HBIrrigation_waterUse, 'Spatial')
+polyc = raster::aggregate(HBIrrigation_waterUse, dissolve = TRUE, 
+                          by = c("ResourceConsentID","Landuse","sum_waterUse")) 
+# dissolve individual polygon into multipolygon based on consent ID, Land use, water use 
+# so that won't double up the water use
+
+polyc$Area = raster::area(polyc)/10000 # calculate area for each record.
+HBIrrigation_waterUse = st_as_sf(polyc) %>% st_set_crs(2193)
+```
+
+Just to inspect what `HBIrrigation_waterUse` looks like.
+```{r eval=T}
+head(HBIrrigation_waterUse)
+```
+Noted that some records such as `AUTH-109640-02` have triple water use for different land use types!
+
+#### Upon discussion, for each consent ID, water use is split based on the area of each land use type.
+
+```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
+HBIrrigation_waterUse = HBIrrigation_waterUse %>% 
+  group_by(ResourceConsentID) %>% 
+  mutate(Area_Prop = Area / sum(Area)) %>% 
+  mutate(waterUse = sum_waterUse * Area_Prop) %>%  
+  # calculate water use based on the areal proportions of each land use type
+  select(-sum_waterUse,-Area,-Area_Prop)
+```
+
+Inspect `HBIrrigation_waterUse` again.
+```{r eval=T}
+head(HBIrrigation_waterUse)
+```
+Different land use types now have different water use for `AUTH-109640-02`.
+
+#### Interactive mapping using mapview
+
+```{r eval=T}
+mapview::mapviewOptions(fgb = FALSE)
+mapview::mapview(HBIrrigation_waterUse, zcol = "waterUse", layer.name = "Sum water use", 
+                 col.regions = function (n, alpha = 1, begin = 0, end = 1, direction = 1) {
+                   colors <- RColorBrewer::brewer.pal(9, "YlOrRd")
+                   if (direction < 0) colors <- rev(colors)
+                   colorRampPalette(colors, alpha = alpha)(n)
+                   }, at = c(0, 20000, 50000, 150000, 12000000)
+)
+```
+
+#### Produce summary statistics for reporting 
+summary of hectares based on land use
+```{r eval=T}
+HBIrrigation %>% 
+  group_by(Landuse) %>% 
+  summarise(Hectare = sum(area_ha))
+```
+
+summary of water use based on land use
+```{r eval=T}
+HBIrrigation_waterUse  %>% 
+  group_by(Landuse) %>% 
+  summarise(sum_waterUse = sum(waterUse, na.rm = T)/1000000)
+```
+
+## More questions
+
+* Which consent IDs have not been mapped? i.e. which land use parcel has not consent ID and water use?
+* How large are those areas? 
+* How much water use accounted for those areas? 
+
+```{r eval=T}
+ID_missed = WaterUse19_20$ResourceConsentID[!(WaterUse19_20$ResourceConsentID %in% HBIrrigation_waterUse$ResourceConsentID)]
+ID_missed
+
+Consent_wateruse_sply_IDmissed = Consent_wateruse_sply %>% filter(ResourceConsentID %in% ID_missed)
+Consent_wateruse_spt_filled_IDmissed = Consent_wateruse_spt_filled %>% filter(ResourceConsentID %in% ID_missed)
+
+Consent_wateruse_spt_filled_IDmissed_sply = polyb %>% 
+  st_join(Consent_wateruse_spt_filled_IDmissed, left = T) %>%
+  filter(!is.na(ResourceConsentID)) %>% 
+  select(ResourceConsentID, ConsentID, AuthHolder, sum_waterUse, SHAPE)
+  
+Consent_wateruse_sply_noLanduse = rbind(Consent_wateruse_spt_filled_IDmissed_sply, 
+                                        Consent_wateruse_sply_IDmissed %>% select(-Source))
+
+Consent_wateruse_sply_noLanduse = as(Consent_wateruse_sply_noLanduse, 'Spatial')
+polyd = raster::aggregate(Consent_wateruse_sply_noLanduse, dissolve = TRUE, by = c("ResourceConsentID","sum_waterUse")) 
+# dissolve again to aggregate individual polygon into multipolygon
+```
+
+```{r eval=T}
+print( paste0(sum(polyd$sum_waterUse)/1000000, " mill m^3 for outside the mapped irrigated area"))
+print( paste0(sum(raster::area(polyd)/10000), " ha for outside the mapped irrigated area"))
+```
+
+## Limitations
+*	Where one water use consent ID has multiple land uses, the water volume is split proportionally to the mapped irrigated area of each land use type e.g. 60% pasture: 40% cropping, water is also split 60:40.  
+*	Twyford Global consent data has been split proportionally amongst all land uses as described above.
+*	Aqualinc mapping clips to the visibly irrigated area.  Land that was not mapped by Aqualinc but HBRC data identifies a consent (74 Authorisation ID’s) is tabled as unmapped.  This equates to 1.6 mill m3.  The land area linked to this comes from the consents layer not the land use mapping.  Further mapping to refine this is required for future mapping.
+*	Some parcels of land are showing as irrigated in the Aqualinc mapping but do not have an irrigation consent associated with that parcel.  Initial inspections indicate they are irrigated via consented dam takes not an irrigation consent.  Other properties are likely to be irrigated via the permitted activity rule or, are discrepancies within the irrigation mapping.
+
