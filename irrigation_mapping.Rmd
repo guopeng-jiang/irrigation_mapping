@@ -30,7 +30,10 @@ To create a map to show water use between 2019 and 2020 water year in Hawke's Ba
 * Land use
   +	Several land use layers joined to form this land use layer: Agri base, LCDB and …..
 
-The map was produced by joining water use data to consent layer on consent ID, then spatially joining the new layer to irrigated land use layer (while keeping the land use layer).
+The map was produced by:
+
+1. joining water use data to consent layer on consent ID, then;
+2. spatially joining the new layer to irrigated land use layer (while keeping the land use layer).
 
 ![Analytic Workflow](N:/Gorden_Jiang/Monique_consent_mapping/workflow.png)
 
@@ -229,7 +232,7 @@ Noted that some records such as `AUTH-109640-02` have triple water use for diffe
 HBIrrigation_waterUse = HBIrrigation_waterUse %>% 
   group_by(ResourceConsentID) %>% 
   mutate(Area_Prop = Area / sum(Area)) %>% 
-  mutate(waterUse = sum_waterUse * Area_Prop) %>%  
+  mutate(waterUse = round(sum_waterUse * Area_Prop, digits = 2)) %>%  
   # calculate water use based on the areal proportions of each land use type
   select(-sum_waterUse,-Area,-Area_Prop)
 ```
@@ -244,7 +247,7 @@ Different land use types now have different water use for `AUTH-109640-02`.
 
 ```{r eval=T}
 mapview::mapviewOptions(fgb = FALSE)
-mapview::mapview(HBIrrigation_waterUse, zcol = "waterUse", layer.name = "Sum water use", 
+mapview::mapview(HBIrrigation_waterUse, alpha = 0, alpha.regions = 1, zcol = "waterUse", layer.name = "Sum water use", 
                  col.regions = function (n, alpha = 1, begin = 0, end = 1, direction = 1) {
                    colors <- RColorBrewer::brewer.pal(9, "YlOrRd")
                    if (direction < 0) colors <- rev(colors)
