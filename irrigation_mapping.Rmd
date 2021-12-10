@@ -7,7 +7,7 @@ output:
 
 ---
 
-## Background
+## Abstract
 
 Land use mapping has been combined with irrigation data from the 2019/20 irrigation year to identify how much water is being used on what land use types such as cropping and horticulture. Water use volumes from water metering data has been applied to mapped irrigation areas.  This gives an understanding of where water is being used and for what purpose.
 
@@ -16,7 +16,7 @@ Mapping of this manner is fraud with difficulties due to the limitations of the 
 ## Objective
 To create a map to show water use between 2019 and 2020 water year in Hawke's Bay for different irrigated land use types.
 
-## Data and method
+## Data and workflow
 
 * Consent layer/data
   +	Irrigation consent polygons and points used to ‘trigger’ parcels in land use layer
@@ -138,6 +138,8 @@ Consent_wateruse_spt2 = Consent_sply %>%
 
 There are still unique 69 IDs missing. We then have to use spatial points for those IDs!
 
+***
+
 Now, join `Consent_spt` to the IDs with null geometry in `Consent_wateruse_spt2`.
 
 ```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
@@ -155,6 +157,8 @@ Consent_wateruse_spt_filled = Consent_spt %>%
 Much better but still missing `AUTH-111467-03` and `AUTH-120244-02`!
 
 This issue needs to be raised with GIS Team.
+
+***
 
 #### Two existing consent polygons with water use data and valid geometry
 ```{r eval=T, results='hide',error=FALSE, warning=FALSE, message=FALSE}
@@ -220,8 +224,8 @@ polyc$Area = raster::area(polyc)/10000 # calculate area for each record.
 HBIrrigation_waterUse = st_as_sf(polyc) %>% st_set_crs(2193)
 ```
 
-Just to inspect what `HBIrrigation_waterUse` looks like.
-```{r eval=T}
+Inspect the first 6 records to see what `HBIrrigation_waterUse` looks like.
+```{r eval=T, echo=F}
 head(HBIrrigation_waterUse)
 ```
 Noted that some records such as `AUTH-109640-02` have triple water use for different land use types!
@@ -238,14 +242,14 @@ HBIrrigation_waterUse = HBIrrigation_waterUse %>%
 ```
 
 Inspect `HBIrrigation_waterUse` again.
-```{r eval=T}
+```{r eval=T, echo=F}
 head(HBIrrigation_waterUse)
 ```
 Different land use types now have different water use for `AUTH-109640-02`.
 
 #### Interactive mapping using mapview
 
-```{r eval=T}
+```{r eval=T,echo=F}
 mapview::mapviewOptions(fgb = FALSE)
 mapview::mapview(HBIrrigation_waterUse, alpha = 0, alpha.regions = 1, zcol = "waterUse", layer.name = "Sum water use", 
                  col.regions = function (n, alpha = 1, begin = 0, end = 1, direction = 1) {
@@ -256,17 +260,30 @@ mapview::mapview(HBIrrigation_waterUse, alpha = 0, alpha.regions = 1, zcol = "wa
 )
 ```
 
+The mapped data are displayed in the table below and can be exported if needed.
+````{r echo = FALSE, warning = FALSE, message = FALSE}
+
+HBIrrigation_waterUse %>%
+  DT::datatable(extensions = 'Buttons',
+            options = list(dom = 'Blfrtip',
+                           buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+                           lengthMenu = list(c(10,25,50,-1),
+                                             c(10,25,50,"All"))))
+```
+
 #### Produce summary statistics for reporting 
 summary of hectares based on land use
-```{r eval=T}
+```{r eval=T,echo=F}
 HBIrrigation %>% 
+  st_drop_geometry() %>% 
   group_by(Landuse) %>% 
-  summarise(Hectare = sum(area_ha))
+  summarise(Hectare = sum(area_ha)) 
 ```
 
 summary of water use based on land use
-```{r eval=T}
+```{r eval=T,echo=F}
 HBIrrigation_waterUse  %>% 
+  st_drop_geometry() %>%
   group_by(Landuse) %>% 
   summarise(sum_waterUse = sum(waterUse, na.rm = T)/1000000)
 ```
@@ -277,10 +294,13 @@ HBIrrigation_waterUse  %>%
 * How large are those areas? 
 * How much water use accounted for those areas? 
 
-```{r eval=T}
+```{r eval=T, echo=F}
 ID_missed = WaterUse19_20$ResourceConsentID[!(WaterUse19_20$ResourceConsentID %in% HBIrrigation_waterUse$ResourceConsentID)]
+print(paste0(NROW(unique(ID_missed))," records have not been mapped."))
 ID_missed
+```
 
+```{r eval=T,echo=F}
 Consent_wateruse_sply_IDmissed = Consent_wateruse_sply %>% filter(ResourceConsentID %in% ID_missed)
 Consent_wateruse_spt_filled_IDmissed = Consent_wateruse_spt_filled %>% filter(ResourceConsentID %in% ID_missed)
 
@@ -297,7 +317,7 @@ polyd = raster::aggregate(Consent_wateruse_sply_noLanduse, dissolve = TRUE, by =
 # dissolve again to aggregate individual polygon into multipolygon
 ```
 
-```{r eval=T}
+```{r eval=T, echo=F}
 print( paste0(sum(polyd$sum_waterUse)/1000000, " mill m^3 for outside the mapped irrigated area"))
 print( paste0(sum(raster::area(polyd)/10000), " ha for outside the mapped irrigated area"))
 ```
